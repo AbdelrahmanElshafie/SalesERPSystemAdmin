@@ -4,15 +4,20 @@ import { getAuth, Auth, createUserWithEmailAndPassword as firebaseCreateUser, se
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
 
+const getEnvValue = (key: string): string | undefined => {
+  const value = import.meta.env[key];
+  return typeof value === 'string' ? value.trim() : value;
+};
+
 // Firebase configuration from environment variables
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+  apiKey: getEnvValue('VITE_FIREBASE_API_KEY'),
+  authDomain: getEnvValue('VITE_FIREBASE_AUTH_DOMAIN'),
+  projectId: getEnvValue('VITE_FIREBASE_PROJECT_ID'),
+  storageBucket: getEnvValue('VITE_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: getEnvValue('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: getEnvValue('VITE_FIREBASE_APP_ID'),
+  measurementId: getEnvValue('VITE_FIREBASE_MEASUREMENT_ID'),
 };
 
 // Initialize Firebase only once

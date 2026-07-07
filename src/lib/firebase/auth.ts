@@ -26,8 +26,14 @@ export const signIn = async (
   const userCredential = await signInWithEmailAndPassword(auth, email, password);
   const user = userCredential.user;
 
-  // Check if user is a system admin
-  const admin = await getSystemAdmin(user.uid);
+  let admin: SystemAdmin | null;
+  try {
+    // Check if user is a system admin
+    admin = await getSystemAdmin(user.uid);
+  } catch (error) {
+    await firebaseSignOut(auth);
+    throw error;
+  }
 
   if (!admin) {
     await firebaseSignOut(auth);

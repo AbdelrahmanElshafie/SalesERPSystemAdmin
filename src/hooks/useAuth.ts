@@ -47,6 +47,7 @@ export const useAuth = () => {
           }
         } catch (err) {
           console.error('Error loading admin data:', err);
+          await firebaseSignOut();
           storeLogout();
         }
       } else {
@@ -71,7 +72,11 @@ export const useAuth = () => {
       const error = err as Error & { code?: string };
       let errorMessage = 'Login failed. Please try again.';
 
-      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+      if (
+        error.code === 'auth/user-not-found' ||
+        error.code === 'auth/wrong-password' ||
+        error.code === 'auth/invalid-credential'
+      ) {
         errorMessage = 'Invalid email or password.';
       } else if (error.code === 'auth/too-many-requests') {
         errorMessage = 'Too many failed attempts. Please try again later.';

@@ -100,6 +100,11 @@ const getCompanySchema = (isEditing: boolean) =>
 
 type FormData = z.infer<typeof companySchema>;
 
+function LimitHelper({ value }: { value?: number }) {
+  if (value !== -1) return null;
+  return <p className="text-xs text-muted-foreground">Unlimited</p>;
+}
+
 export function CompanyFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -146,6 +151,7 @@ export function CompanyFormPage() {
   });
 
   const selectedPlanId = watch('subscriptionPlanId');
+  const limitValues = watch('limits');
 
   // Load company data when editing
   useEffect(() => {
@@ -472,7 +478,7 @@ export function CompanyFormPage() {
           <CardHeader>
             <CardTitle>Resource Limits</CardTitle>
             <CardDescription>
-              Set limits for this company. Use -1 for unlimited.
+              These limits are copied from the selected plan. Use -1 for unlimited.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -484,6 +490,7 @@ export function CompanyFormPage() {
                   type="number"
                   {...register('limits.maxUsers', { valueAsNumber: true })}
                 />
+                <LimitHelper value={limitValues?.maxUsers} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="maxClients">Max Clients</Label>
@@ -492,6 +499,7 @@ export function CompanyFormPage() {
                   type="number"
                   {...register('limits.maxClients', { valueAsNumber: true })}
                 />
+                <LimitHelper value={limitValues?.maxClients} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="maxVendors">Max Vendors</Label>
@@ -500,6 +508,7 @@ export function CompanyFormPage() {
                   type="number"
                   {...register('limits.maxVendors', { valueAsNumber: true })}
                 />
+                <LimitHelper value={limitValues?.maxVendors} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="maxProducts">Max Products</Label>
@@ -508,6 +517,7 @@ export function CompanyFormPage() {
                   type="number"
                   {...register('limits.maxProducts', { valueAsNumber: true })}
                 />
+                <LimitHelper value={limitValues?.maxProducts} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="maxInvoices">Max Invoices/Month</Label>
@@ -516,6 +526,7 @@ export function CompanyFormPage() {
                   type="number"
                   {...register('limits.maxInvoices', { valueAsNumber: true })}
                 />
+                <LimitHelper value={limitValues?.maxInvoices} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="maxBills">Max Bills/Month</Label>
@@ -524,6 +535,7 @@ export function CompanyFormPage() {
                   type="number"
                   {...register('limits.maxBills', { valueAsNumber: true })}
                 />
+                <LimitHelper value={limitValues?.maxBills} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="maxWarehouses">Max Warehouses</Label>
@@ -532,6 +544,7 @@ export function CompanyFormPage() {
                   type="number"
                   {...register('limits.maxWarehouses', { valueAsNumber: true })}
                 />
+                <LimitHelper value={limitValues?.maxWarehouses} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="storageGB">Storage (GB)</Label>
@@ -540,6 +553,7 @@ export function CompanyFormPage() {
                   type="number"
                   {...register('limits.storageGB', { valueAsNumber: true })}
                 />
+                <LimitHelper value={limitValues?.storageGB} />
               </div>
             </div>
           </CardContent>

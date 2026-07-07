@@ -332,6 +332,10 @@ export interface CompanyFormData {
   limits?: CompanyLimits;
   features?: FeatureSettings;
   currency?: string;
+  initialUserName?: string;
+  initialUserEmail?: string;
+  initialUserPhone?: string;
+  initialUserPassword?: string;
 }
 
 export interface SubscriptionPlanFormData {

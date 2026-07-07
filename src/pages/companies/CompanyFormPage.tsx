@@ -1,9 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft, Loader2, Save, Building2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Save, Building2, UserPlus } from 'lucide-react';
 import { useCompanies, useCompany } from '@/hooks/useCompanies';
 import { useSubscriptionPlans } from '@/hooks/useSubscriptionPlans';
 import { useToast } from '@/hooks/useToast';
@@ -51,7 +51,52 @@ const companySchema = z.object({
     maxWarehouses: z.number().min(-1),
     storageGB: z.number().min(-1),
   }),
+  initialUserName: z.string().optional(),
+  initialUserEmail: z.string().optional(),
+  initialUserPhone: z.string().optional(),
+  initialUserPassword: z.string().optional(),
 });
+
+const getCompanySchema = (isEditing: boolean) =>
+  companySchema.superRefine((data, ctx) => {
+    if (isEditing) return;
+
+    if (!data.initialUserName?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['initialUserName'],
+        message: 'Admin name is required',
+      });
+    }
+
+    if (!data.initialUserEmail?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['initialUserEmail'],
+        message: 'Admin email is required',
+      });
+    } else if (!z.string().email().safeParse(data.initialUserEmail).success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['initialUserEmail'],
+        message: 'Invalid admin email address',
+      });
+    }
+
+    if (!data.initialUserPassword) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['initialUserPassword'],
+        message: 'Admin password is required',
+      });
+    } else if (data.initialUserPassword.length < 8) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['initialUserPassword'],
+        message: 'Password must be at least 8 characters',
+      });
+    }
+  });
 
 type FormData = z.infer<typeof companySchema>;
 
@@ -64,6 +109,7 @@ export function CompanyFormPage() {
   const { company, isLoading: companyLoading } = useCompany(id);
   const { plans, isLoading: plansLoading } = useSubscriptionPlans();
   const { createCompany, updateCompany, isCreating, isUpdating } = useCompanies();
+  const formSchema = useMemo(() => getCompanySchema(isEditing), [isEditing]);
 
   const {
     register,
@@ -74,7 +120,7 @@ export function CompanyFormPage() {
     setValue,
     formState: { errors },
   } = useForm<FormData>({
-    resolver: zodResolver(companySchema),
+    resolver: zodResolver(formSchema),
     defaultValues: {
       name: '',
       email: '',
@@ -92,6 +138,10 @@ export function CompanyFormPage() {
         maxWarehouses: 3,
         storageGB: 5,
       },
+      initialUserName: '',
+      initialUserEmail: '',
+      initialUserPhone: '',
+      initialUserPassword: '',
     },
   });
 
@@ -262,6 +312,74 @@ export function CompanyFormPage() {
             </div>
           </CardContent>
         </Card>
+
+        {!isEditing && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <UserPlus className="h-5 w-5" />
+                Company Admin User
+              </CardTitle>
+              <CardDescription>Create the first login account for this company</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="initialUserName">Admin Name *</Label>
+                  <Input
+                    id="initialUserName"
+                    {...register('initialUserName')}
+                    error={!!errors.initialUserName}
+                  />
+                  {errors.initialUserName && (
+                    <p className="text-sm text-destructive">
+                      {errors.initialUserName.message}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="initialUserEmail">Admin Email *</Label>
+                  <Input
+                    id="initialUserEmail"
+                    type="email"
+                    {...register('initialUserEmail')}
+                    error={!!errors.initialUserEmail}
+                  />
+                  {errors.initialUserEmail && (
+                    <p className="text-sm text-destructive">
+                      {errors.initialUserEmail.message}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="initialUserPhone">Admin Phone</Label>
+                  <Input
+                    id="initialUserPhone"
+                    {...register('initialUserPhone')}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="initialUserPassword">Admin Password *</Label>
+                  <Input
+                    id="initialUserPassword"
+                    type="password"
+                    autoComplete="new-password"
+                    {...register('initialUserPassword')}
+                    error={!!errors.initialUserPassword}
+                  />
+                  {errors.initialUserPassword && (
+                    <p className="text-sm text-destructive">
+                      {errors.initialUserPassword.message}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Address */}
         <Card>

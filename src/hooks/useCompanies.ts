@@ -4,9 +4,11 @@ import {
   getAllCompanies,
   getCompany,
   createCompany as createCompanyFn,
+  createCompanyUser,
   updateCompany as updateCompanyFn,
   deleteCompany as deleteCompanyFn,
 } from '@/lib/firebase/firestore';
+import { createUserWithoutSignIn } from '@/lib/firebase/config';
 import type { Company, CompanyFormData } from '@/types/models';
 
 // Query keys
@@ -26,6 +28,15 @@ export function useCompanies() {
 
   const createMutation = useMutation({
     mutationFn: async (data: CompanyFormData) => {
+      const initialUserName = data.initialUserName?.trim();
+      const initialUserEmail = data.initialUserEmail?.trim();
+      const initialUserPhone = data.initialUserPhone?.trim();
+      const initialUserPassword = data.initialUserPassword;
+
+      if (!initialUserName || !initialUserEmail || !initialUserPassword) {
+        throw new Error('Initial company admin name, email, and password are required.');
+      }
+
       const defaultLimits = {
         maxUsers: 5,
         maxClients: 100,
@@ -77,17 +88,54 @@ export function useCompanies() {
         features: data.features || defaultFeatures,
         createdBy: 'system', // Will be replaced with actual admin ID in firestore function
       };
-      return createCompanyFn(companyData);
+
+      let companyId: string | undefined;
+
+      try {
+        companyId = await createCompanyFn(companyData);
+        const userId = await createUserWithoutSignIn(
+          initialUserEmail,
+          initialUserPassword
+        );
+
+        await createCompanyUser(companyId, userId, {
+          companyId,
+          email: initialUserEmail,
+          name: initialUserName,
+          phone: initialUserPhone,
+          role: 'admin',
+          status: 'active',
+        });
+
+        await updateCompanyFn(companyId, { adminUserId: userId });
+
+        return companyId;
+      } catch (error) {
+        if (companyId) {
+          try {
+            await deleteCompanyFn(companyId);
+          } catch (rollbackError) {
+            console.error('Failed to roll back company after user creation error:', rollbackError);
+          }
+        }
+        throw error;
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: COMPANIES_KEY });
       queryClient.invalidateQueries({ queryKey: COMPANY_STATS_KEY });
+      queryClient.invalidateQueries({ queryKey: ['users'] });
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Partial<CompanyFormData> }) => {
-      return updateCompanyFn(id, data as Partial<Company>);
+      const companyData = { ...data };
+      delete companyData.initialUserName;
+      delete companyData.initialUserEmail;
+      delete companyData.initialUserPhone;
+      delete companyData.initialUserPassword;
+      return updateCompanyFn(id, companyData as Partial<Company>);
     },
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: COMPANIES_KEY });

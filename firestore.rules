@@ -2,41 +2,863 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() {
+    // Helper functions
+    function isAuthenticated() {
       return request.auth != null;
     }
 
-    function isSelf(uid) {
-      return isSignedIn() && request.auth.uid == uid;
-    }
-
-    function adminDoc(uid) {
+    function systemAdminDoc(uid) {
       return get(/databases/$(database)/documents/systemAdmins/$(uid));
     }
 
     function isActiveSystemAdmin() {
-      return isSignedIn()
+      return isAuthenticated()
         && exists(/databases/$(database)/documents/systemAdmins/$(request.auth.uid))
-        && adminDoc(request.auth.uid).data.isActive == true;
+        && systemAdminDoc(request.auth.uid).data.isActive == true;
     }
 
     function isSuperAdmin() {
       return isActiveSystemAdmin()
-        && adminDoc(request.auth.uid).data.role == 'super_admin';
+        && systemAdminDoc(request.auth.uid).data.role == 'super_admin';
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function userDataExists() {
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function authEmail() {
+      return request.auth.token.email;
+    }
+
+    function hasAuthClaim(claim) {
+      return isAuthenticated()
+        && request.auth.token.keys().hasAny([claim]);
+    }
+
+    function authCompanyId() {
+      return hasAuthClaim('companyId')
+        ? request.auth.token.companyId
+        : (userDataExists() ? getUserData().companyId : null);
+    }
+
+    function authRole() {
+      return hasAuthClaim('role')
+        ? request.auth.token.role
+        : (userDataExists() ? getUserData().role : null);
+    }
+
+    function authIsActive() {
+      return (hasAuthClaim('active') && request.auth.token.active == true)
+        || (hasAuthClaim('status') && request.auth.token.status in ['active', 'ACTIVE'])
+        || (userDataExists() && getUserData().status in ['active', 'ACTIVE']);
+    }
+
+    function isCompanyMember(companyId) {
+      return isAuthenticated()
+        && authCompanyId() == companyId
+        && authIsActive();
+    }
+
+    function isCompanyAdmin(companyId) {
+      return isCompanyMember(companyId) && authRole() in ['admin', 'ADMIN'];
+    }
+
+    function hasRole(companyId, roles) {
+      return isCompanyMember(companyId)
+        && (
+          authRole() in roles
+          || (authRole() == 'ADMIN' && 'admin' in roles)
+          || (authRole() == 'admin' && 'ADMIN' in roles)
+          || (authRole() == 'SALES_REP' && 'sales_rep' in roles)
+          || (authRole() == 'sales_rep' && 'SALES_REP' in roles)
+          || (authRole() == 'TEAM_LEADER' && 'team_leader' in roles)
+          || (authRole() == 'team_leader' && 'TEAM_LEADER' in roles)
+          || (authRole() == 'ACCOUNTANT' && 'accountant' in roles)
+          || (authRole() == 'accountant' && 'ACCOUNTANT' in roles)
+          || (authRole() == 'INVENTORY_KEEPER' && 'inventory_keeper' in roles)
+          || (authRole() == 'inventory_keeper' && 'INVENTORY_KEEPER' in roles)
+        );
+    }
+
+    function isNumber(value) {
+      return value is int || value is float;
+    }
+
+    function positiveNumber(value) {
+      return isNumber(value) && value > 0;
+    }
+
+    function nonNegativeNumber(value) {
+      return isNumber(value) && value >= 0;
+    }
+
+    function nonZeroNumber(value) {
+      return isNumber(value) && value != 0;
+    }
+
+    function summaryFields() {
+      return [
+        'totalRevenue',
+        'totalReturns',
+        'totalCollected',
+        'totalPending',
+        'totalSales',
+        'totalReturnInvoices',
+        'confirmedSales',
+        'pendingSales',
+        'totalInventoryValue',
+        'totalInventoryQuantity',
+        'lowStockItems',
+        'negativeStockItems',
+        'totalVendorBills',
+        'totalVendorDebt',
+        'totalVendorPaid',
+        'totalWarehouses',
+        'activeWarehouses',
+        'totalSalesReps',
+        'activeUsers',
+        'totalClients',
+        'activeClients',
+        'totalTreasuryBalance',
+        'totalPendingHandovers',
+        'totalExpenses',
+        'totalPendingExpenses',
+        'todayVisits',
+        'completedVisits',
+        'transactionCount',
+        'lastTransactionDate',
+        'lastUpdated'
+      ];
+    }
+
+    function settingsFields() {
+      return [
+        'features',
+        'maps',
+        'location',
+        'tracking',
+        'notifications',
+        'approvals',
+        'defaultLanguage',
+        'supportedLanguages',
+        'updatedAt',
+        'updatedBy'
+      ];
+    }
+
+    function canWriteSummary(companyId) {
+      // Financial summaries (revenue, treasury balance, inventory value, etc.) are
+      // high-trust aggregates. Restrict client writes to admin + accountant; long
+      // term these should be produced exclusively by a Cloud Function trigger.
+      return hasRole(companyId, ['admin', 'ADMIN', 'accountant', 'ACCOUNTANT']);
+    }
+
+
+    function companyFieldMatches(companyId) {
+      return !request.resource.data.keys().hasAny(['companyId'])
+        || request.resource.data.companyId == companyId;
+    }
+
+    function canSell(companyId) {
+      return hasRole(companyId, ['admin', 'ADMIN', 'sales_rep', 'SALES_REP', 'team_leader', 'TEAM_LEADER']);
+    }
+
+    function canAccount(companyId) {
+      return hasRole(companyId, ['admin', 'ADMIN', 'accountant', 'ACCOUNTANT']);
+    }
+
+    function canManageInventory(companyId) {
+      return hasRole(companyId, ['admin', 'ADMIN', 'inventory_keeper', 'INVENTORY_KEEPER']);
+    }
+
+    function warehouseInventorySummaryFields() {
+      return [
+        'totalQuantity',
+        'totalInventoryValue',
+        'lastStockUpdateDate',
+        'updatedAt'
+      ];
+    }
+
+    function productSalesSummaryFields() {
+      return [
+        'totalQuantity',
+        'totalUnitsSold',
+        'totalSalesRevenue',
+        'lastSaleDate',
+        'updatedAt'
+      ];
+    }
+
+    function treasuryBalanceFields() {
+      return [
+        'currentBalance',
+        'lastUpdated',
+        'updatedAt'
+      ];
+    }
+
+    function canUpdateAssignedCarWarehouseInventory(companyId) {
+      return canSell(companyId)
+        && resource.data.type == 'car'
+        && resource.data.linkedRepId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(warehouseInventorySummaryFields());
+    }
+
+    function canUpdateProductSalesSummary(companyId) {
+      return canSell(companyId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(productSalesSummaryFields());
+    }
+
+    function canUpdateAssignedTreasuryBalance(companyId) {
+      return canSell(companyId)
+        && resource.data.assignedUserId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(treasuryBalanceFields());
+    }
+
+    function canLeadField(companyId) {
+      return hasRole(companyId, ['admin', 'ADMIN', 'team_leader', 'TEAM_LEADER']);
+    }
+
+    function canManagePricing(companyId) {
+      return hasRole(companyId, ['admin', 'ADMIN', 'accountant', 'ACCOUNTANT', 'inventory_keeper', 'INVENTORY_KEEPER']);
+    }
+
+    function canManageTargets(companyId) {
+      return hasRole(companyId, ['admin', 'ADMIN', 'team_leader', 'TEAM_LEADER', 'accountant', 'ACCOUNTANT']);
+    }
+
+    function canManageEnterprise(companyId) {
+      return isCompanyAdmin(companyId);
+    }
+
+    function canReadClient(companyId) {
+      return hasRole(companyId, [
+          'admin',
+          'ADMIN',
+          'accountant',
+          'ACCOUNTANT',
+          'inventory_keeper',
+          'INVENTORY_KEEPER',
+          'team_leader',
+          'TEAM_LEADER'
+        ])
+        || (
+          hasRole(companyId, ['sales_rep', 'SALES_REP'])
+          && resource.data.assignedRepId == request.auth.uid
+        );
+    }
+
+    function canCreateClient(companyId) {
+      return hasRole(companyId, ['admin', 'ADMIN', 'sales_rep', 'SALES_REP', 'team_leader', 'TEAM_LEADER'])
+        && (
+          !hasRole(companyId, ['sales_rep', 'SALES_REP'])
+          || request.resource.data.assignedRepId == request.auth.uid
+        );
+    }
+
+    function canUpdateClient(companyId) {
+      return hasRole(companyId, ['admin', 'ADMIN', 'sales_rep', 'SALES_REP', 'team_leader', 'TEAM_LEADER'])
+        && (
+          !hasRole(companyId, ['sales_rep', 'SALES_REP'])
+          || resource.data.assignedRepId == request.auth.uid
+        )
+        && (
+          !hasRole(companyId, ['sales_rep', 'SALES_REP'])
+          || !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['assignedRepId', 'approvalStatus', 'status'])
+        );
+    }
+    function canCreateCompany() {
+      return isAuthenticated()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.email == authEmail()
+        && request.resource.data.isActive == true
+        && request.resource.data.keys().hasAll([
+          'name',
+          'email',
+          'phone',
+          'address',
+          'currency',
+          'createdBy',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'name',
+          'nameAr',
+          'nameEn',
+          'slug',
+          'logo',
+          'email',
+          'phone',
+          'website',
+          'address',
+          'commercialRegistration',
+          'taxNumber',
+          'currency',
+          'features',
+          'maps',
+          'location',
+          'tracking',
+          'notifications',
+          'approvals',
+          'settings',
+          'subscription',
+          'subscriptionPlan',
+          'subscriptionExpiresAt',
+          'isActive',
+          'createdAt',
+          'updatedAt',
+          'createdBy',
+          'adminUserId'
+        ]);
+    }
+
+    function isSetupAdminCreate(companyId, userId) {
+      return isAuthenticated()
+        && request.auth.uid == userId
+        && exists(/databases/$(database)/documents/companies/$(companyId))
+        && get(/databases/$(database)/documents/companies/$(companyId)).data.createdBy == request.auth.uid
+        && request.resource.data.companyId == companyId
+        && request.resource.data.role == 'admin'
+        && request.resource.data.status == 'active'
+        && request.resource.data.email == authEmail();
     }
 
     match /systemAdmins/{adminId} {
-      allow read: if (isSelf(adminId) && resource.data.isActive == true) || isSuperAdmin();
+      allow read: if (isAuthenticated()
+          && request.auth.uid == adminId
+          && resource.data.isActive == true)
+        || isSuperAdmin();
       allow create, delete: if isSuperAdmin();
       allow update: if isSuperAdmin()
         || (
-          isSelf(adminId)
+          isAuthenticated()
+          && request.auth.uid == adminId
           && resource.data.isActive == true
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'lastLogin',
             'updatedAt'
           ])
         );
+    }
+
+    // Users collection - users can read their own data, admins can manage company users
+    match /users/{userId} {
+      // Users can read their own document. Legacy seeded users may have
+      // Firestore document IDs that differ from Firebase Auth UIDs, so allow
+      // email-matched profile lookup after Firebase Auth succeeds.
+      allow read: if isAuthenticated()
+        && (
+          request.auth.uid == userId ||
+          resource.data.email == authEmail()
+        );
+
+      // Users can update their own profile (limited fields)
+      allow update: if isAuthenticated()
+        && (
+          request.auth.uid == userId ||
+          resource.data.email == authEmail()
+        )
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['role', 'companyId', 'permissions', 'isActive', 'status', 'email']);
+
+      // Admins can read all users in their company
+      allow read: if isAuthenticated() &&
+        resource.data.companyId == authCompanyId() &&
+        authRole() in ['admin', 'ADMIN'];
+
+      // Company setup can create the first admin. Existing admins manage users.
+      allow create: if isSetupAdminCreate(request.resource.data.companyId, userId)
+        || (
+          isAuthenticated() &&
+          isCompanyAdmin(request.resource.data.companyId)
+        );
+
+      allow update: if isAuthenticated() &&
+        isCompanyAdmin(resource.data.companyId) &&
+        request.resource.data.companyId == resource.data.companyId;
+    }
+
+    // Companies collection
+    match /companies/{companyId} {
+      // Company members can read their company
+      allow read: if isCompanyMember(companyId);
+
+      // Only company admins can update company settings
+      allow update: if isCompanyAdmin(companyId);
+
+      // Company creation is handled by setup/registration.
+      allow create: if canCreateCompany();
+
+      // Company admins subcollection
+      match /admins/{adminId} {
+        allow read, write: if isCompanyAdmin(companyId);
+      }
+
+      // Mobile-compatible company users mirror.
+      match /users/{userId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if isCompanyAdmin(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      // Clients subcollection
+      // Sales reps can create/update clients but cannot self-approve them -
+      // approvalStatus.status changes are reserved for admins.
+      match /clients/{clientId} {
+        allow read: if canReadClient(companyId);
+
+        // On create: non-admins must submit with status 'pending'
+        allow create: if canCreateClient(companyId) && (
+          authRole() in ['admin', 'ADMIN'] ||
+          request.resource.data.status == 'pending'
+        );
+
+        // On update: admins can change anything; non-admins must not touch
+        // approvalStatus or status.
+        allow update: if canUpdateClient(companyId) && (
+          authRole() in ['admin', 'ADMIN'] ||
+          !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['approvalStatus', 'status'])
+        );
+
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      // Inventory subcollection
+      match /inventory/{itemId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if hasRole(companyId, ['admin', 'inventory_keeper']);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      // Sales subcollection
+      match /sales/{saleId} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if hasRole(companyId, ['admin', 'sales_rep', 'team_leader']);
+        allow update: if hasRole(companyId, ['admin', 'sales_rep', 'team_leader', 'accountant']);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      // Payments subcollection
+      match /payments/{paymentId} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if hasRole(companyId, ['admin', 'sales_rep', 'team_leader', 'accountant']);
+        allow update: if hasRole(companyId, ['admin', 'accountant']);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      // Money Handovers subcollection
+      match /moneyHandovers/{handoverId} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if hasRole(companyId, ['admin', 'sales_rep', 'team_leader']);
+        allow update: if hasRole(companyId, ['admin', 'accountant', 'team_leader']);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      // Visits subcollection
+      match /visits/{visitId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if hasRole(companyId, ['admin', 'sales_rep', 'team_leader']);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      // Expenses subcollection
+      match /expenses/{expenseId} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if hasRole(companyId, ['admin', 'sales_rep', 'team_leader', 'accountant']);
+        allow update: if hasRole(companyId, ['admin', 'accountant']);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      // Teams subcollection
+      match /teams/{teamId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update, delete: if isCompanyAdmin(companyId);
+      }
+
+      // Products subcollection
+      match /products/{productId} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if hasRole(companyId, ['admin', 'inventory_keeper']);
+        allow update: if hasRole(companyId, ['admin', 'inventory_keeper'])
+          || canUpdateProductSalesSummary(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      // Tracking data subcollection
+      match /tracking/{trackingId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if isCompanyMember(companyId);
+      }
+
+      // Notifications subcollection
+      match /notifications/{notificationId} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if isCompanyAdmin(companyId);
+        allow update: if isCompanyMember(companyId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt', 'updatedAt']);
+        allow delete: if isCompanyMember(companyId);
+      }
+
+      // ============================================
+      // Market-gap product contracts
+      // ============================================
+
+      match /offlineEvents/{eventId} {
+        allow read: if isCompanyMember(companyId);
+        // Only field-facing roles legitimately emit offline events; otherwise any
+        // member could inflate activity metrics.
+        allow create, update: if canSell(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /repDaySessions/{sessionId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if canSell(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /routePlans/{routePlanId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if canLeadField(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /routeComplianceEvents/{eventId} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if canSell(companyId)
+          && companyFieldMatches(companyId);
+        allow update, delete: if isCompanyAdmin(companyId);
+      }
+
+      match /vanInventories/{inventoryId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if (
+            canSell(companyId) ||
+            canManageInventory(companyId) ||
+            canLeadField(companyId)
+          )
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /merchandisingTasks/{taskId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if canSell(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /priceLists/{priceListId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if canManagePricing(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /promotions/{promotionId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if canManagePricing(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /journalEntries/{entryId} {
+        allow read: if canAccount(companyId);
+        allow create, update: if canAccount(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /arApAgingSnapshots/{snapshotId} {
+        allow read: if canAccount(companyId);
+        allow create, update: if canAccount(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /taxDocuments/{documentId} {
+        allow read: if canAccount(companyId);
+        allow create, update: if canAccount(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /inventoryLots/{lotId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if canManageInventory(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /productUnits/{unitId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if canManageInventory(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /inventoryValuationSnapshots/{snapshotId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if canManageInventory(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /salesTargets/{targetId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if canManageTargets(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /commissionRuns/{runId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if canManageTargets(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /customerPortalUsers/{portalUserId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if (canSell(companyId) || canAccount(companyId))
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /portalOrders/{orderId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if (canSell(companyId) || canAccount(companyId))
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /paymentIntegrations/{integrationId} {
+        allow read: if canAccount(companyId);
+        allow create, update: if canAccount(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /paymentProviderEvents/{eventId} {
+        allow read: if canAccount(companyId);
+        allow create: if canAccount(companyId)
+          && companyFieldMatches(companyId);
+        allow update, delete: if isCompanyAdmin(companyId);
+      }
+
+      match /auditLogs/{logId} {
+        allow read: if canManageEnterprise(companyId);
+        allow create: if isCompanyMember(companyId)
+          && companyFieldMatches(companyId)
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.action is string
+          && request.resource.data.entityType is string
+          && request.resource.data.entityId is string;
+        allow update, delete: if false;
+      }
+
+      match /backupRuns/{runId} {
+        allow read: if canManageEnterprise(companyId);
+        allow create, update: if canManageEnterprise(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if canManageEnterprise(companyId);
+      }
+
+      match /slaIncidents/{incidentId} {
+        allow read: if canManageEnterprise(companyId);
+        allow create, update: if canManageEnterprise(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if canManageEnterprise(companyId);
+      }
+
+      match /uatSuites/{suiteId} {
+        allow read: if isCompanyAdmin(companyId);
+        allow create, update: if isCompanyAdmin(companyId)
+          && companyFieldMatches(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      // ============================================
+      // Inventory management subcollections
+      // ============================================
+
+      match /warehouses/{warehouseId} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if hasRole(companyId, ['admin', 'inventory_keeper']);
+        allow update: if hasRole(companyId, ['admin', 'inventory_keeper'])
+          || canUpdateAssignedCarWarehouseInventory(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /productCategories/{categoryId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update, delete: if hasRole(companyId, ['admin', 'inventory_keeper']);
+      }
+
+      match /vendors/{vendorId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if hasRole(companyId, ['admin', 'accountant', 'inventory_keeper']);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /vendorBills/{billId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if hasRole(companyId, ['admin', 'accountant', 'inventory_keeper']);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /stockBalances/{balanceId} {
+        allow read: if isCompanyMember(companyId);
+        // Stock balances are written by stock operations. Validate the target
+        // document and basic balance math to prevent arbitrary malformed rows.
+        allow create, update: if hasRole(companyId, ['admin', 'inventory_keeper', 'sales_rep', 'team_leader'])
+          && balanceId == request.resource.data.productId + '_' + request.resource.data.warehouseId
+          && nonNegativeNumber(request.resource.data.quantity)
+          && nonNegativeNumber(request.resource.data.reservedQuantity)
+          && request.resource.data.availableQuantity == request.resource.data.quantity - request.resource.data.reservedQuantity
+          && request.resource.data.keys().hasOnly([
+            'id',
+            'productId',
+            'productSku',
+            'productName',
+            'warehouseId',
+            'warehouseName',
+            'warehouseCode',
+            'quantity',
+            'reservedQuantity',
+            'availableQuantity',
+            'totalValue',
+            'lastStockTakeDate',
+            'lastMovementDate',
+            'createdAt',
+            'updatedAt'
+          ]);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /stockOperations/{operationId} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if hasRole(companyId, ['admin', 'inventory_keeper', 'sales_rep', 'team_leader'])
+          && nonZeroNumber(request.resource.data.quantity)
+          && nonNegativeNumber(request.resource.data.previousBalance)
+          && nonNegativeNumber(request.resource.data.newBalance)
+          && (
+            request.resource.data.performedBy == request.auth.uid ||
+            isCompanyAdmin(companyId)
+          );
+        // Stock operations are append-only audit history.
+        allow update, delete: if isCompanyAdmin(companyId);
+      }
+
+      match /stockTransfers/{transferId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if hasRole(companyId, ['admin', 'inventory_keeper', 'team_leader', 'sales_rep']);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /inventoryTransfers/{transferId} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if hasRole(companyId, ['admin', 'inventory_keeper', 'team_leader', 'sales_rep'])
+          && (
+            authRole() in ['admin', 'ADMIN'] ||
+            request.resource.data.requestedBy == request.auth.uid
+          );
+        allow update: if hasRole(companyId, ['admin', 'inventory_keeper', 'team_leader']);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      // ============================================
+      // Treasury subcollections
+      // ============================================
+
+      match /treasuries/{treasuryId} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if hasRole(companyId, ['admin', 'accountant']);
+        allow update: if hasRole(companyId, ['admin', 'accountant'])
+          || canUpdateAssignedTreasuryBalance(companyId);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /treasuryTransactions/{transactionId} {
+        allow read: if isCompanyMember(companyId);
+        // Transactions are produced by payment / vendor-bill flows; restrict
+        // to roles that drive those flows. Treat as append-only history for
+        // non-admins.
+        allow create: if hasRole(companyId, ['admin', 'accountant', 'sales_rep', 'team_leader', 'inventory_keeper'])
+          && request.resource.data.type in ['credit', 'debit']
+          && request.resource.data.source in [
+            'vendor_bill_payment',
+            'client_payment',
+            'expense',
+            'transfer_in',
+            'transfer_out',
+            'initial_balance',
+            'manual'
+          ]
+          && positiveNumber(request.resource.data.amount)
+          // Treasury balance must never drop below zero through a transaction write.
+          && nonNegativeNumber(request.resource.data.balanceAfter)
+          && (
+            request.resource.data.createdBy == request.auth.uid ||
+            request.resource.data.userId == request.auth.uid ||
+            request.resource.data.performedBy == request.auth.uid ||
+            isCompanyAdmin(companyId)
+          );
+        allow update, delete: if isCompanyAdmin(companyId);
+      }
+
+      // ============================================
+      // Visits / Visit plans / Activity log / Summary
+      // ============================================
+
+      match /visitPlans/{planId} {
+        allow read: if isCompanyMember(companyId);
+        allow create, update: if hasRole(companyId, ['admin', 'team_leader']);
+        allow delete: if isCompanyAdmin(companyId);
+      }
+
+      match /activityLogs/{logId} {
+        allow read: if isCompanyMember(companyId);
+        // Activity logs are append-only and written by app code; never edited.
+        allow create: if isCompanyMember(companyId)
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.action is string
+          && request.resource.data.entityType is string
+          && request.resource.data.entityId is string;
+        allow update, delete: if false;
+      }
+
+      match /_metadata/{document} {
+        allow read: if isCompanyMember(companyId);
+        allow create: if document == 'summary'
+          && canWriteSummary(companyId)
+          && request.resource.data.keys().hasOnly(summaryFields());
+        allow update: if document == 'summary'
+          && canWriteSummary(companyId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(summaryFields());
+
+        allow create, update: if document == 'counters'
+          && hasRole(companyId, ['admin', 'accountant', 'inventory_keeper'])
+          && request.resource.data.keys().hasOnly(['vendorBillCount']);
+
+        allow create, update: if document == 'settings'
+          && isCompanyAdmin(companyId)
+          && request.resource.data.keys().hasOnly(settingsFields());
+
+        allow delete: if isCompanyAdmin(companyId);
+      }
     }
 
     match /{document=**} {

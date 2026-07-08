@@ -307,6 +307,12 @@ export const createCompanyUser = async (
   userId: string,
   data: Omit<CompanyUser, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<void> => {
+  await setDocument('users', userId, {
+    ...data,
+    id: userId,
+    createdAt: Timestamp.now(),
+  } as Record<string, unknown>);
+
   await setDocument(`companies/${companyId}/users`, userId, {
     ...data,
     createdAt: Timestamp.now(),
